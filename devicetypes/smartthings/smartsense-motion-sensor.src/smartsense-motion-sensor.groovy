@@ -1,45 +1,40 @@
 /*
-===============================================================================
  *  Copyright 2016 SmartThings
  *
  *  Licensed under the Apache License, Version 2.0 (the "License"); you may not
- *  use this file except in compliance with the License. You may obtain a copy 
+ *  use this file except in compliance with the License. You may obtain a copy
  *  of the License at:
  *
  *      http://www.apache.org/licenses/LICENSE-2.0
  *
- *  Unless required by applicable law or agreed to in writing, software 
- *  distributed under the License is distributed on an "AS IS" BASIS, WITHOUT 
- *  WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the 
- *  License for the specific language governing permissions and limitations 
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+ *  WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+ *  License for the specific language governing permissions and limitations
  *  under the License.
-===============================================================================
- *  Purpose: SmartSense Motion Sensor DTH File
- *
- *  Filename: SmartSense-Motion-Sensor.src/SmartSense-Motion-Sensor.groovy
- *
- *  Change History:
- *  1. 20160116 TW - Update/Edit to support i18n translations
- *  2. 20160125 TW = Incorporated new battery mapping from TM
-===============================================================================
  */
+import physicalgraph.zigbee.clusters.iaszone.ZoneStatus
+
 
 metadata {
 	definition (name: "SmartSense Motion Sensor", namespace: "smartthings", author: "SmartThings") {
 		capability "Motion Sensor"
 		capability "Configuration"
 		capability "Battery"
-        capability "Temperature Measurement"
+		capability "Temperature Measurement"
 		capability "Refresh"
-        
-        command "enrollResponse"
+		capability "Health Check"
+		capability "Sensor"
+
+		command "enrollResponse"
 
 		fingerprint inClusters: "0000,0001,0003,0402,0500,0020,0B05", outClusters: "0019", manufacturer: "CentraLite", model: "3305-S"
-        fingerprint inClusters: "0000,0001,0003,0402,0500,0020,0B05", outClusters: "0019", manufacturer: "CentraLite", model: "3325-S", deviceJoinName: "Motion Sensor"
-        fingerprint inClusters: "0000,0001,0003,0402,0500,0020,0B05", outClusters: "0019", manufacturer: "CentraLite", model: "3305"
-        fingerprint inClusters: "0000,0001,0003,0402,0500,0020,0B05", outClusters: "0019", manufacturer: "CentraLite", model: "3325"
-        fingerprint inClusters: "0000,0001,0003,0402,0500,0020,0B05", outClusters: "0019", manufacturer: "CentraLite", model: "3326"
-        fingerprint inClusters: "0000,0001,0003,000F,0020,0402,0500", outClusters: "0019", manufacturer: "SmartThings", model: "motionv4", deviceJoinName: "Motion Sensor"
+		fingerprint inClusters: "0000,0001,0003,0402,0500,0020,0B05", outClusters: "0019", manufacturer: "CentraLite", model: "3325-S", deviceJoinName: "Motion Sensor"
+		fingerprint inClusters: "0000,0001,0003,0402,0500,0020,0B05", outClusters: "0019", manufacturer: "CentraLite", model: "3305"
+		fingerprint inClusters: "0000,0001,0003,0402,0500,0020,0B05", outClusters: "0019", manufacturer: "CentraLite", model: "3325"
+		fingerprint inClusters: "0000,0001,0003,0402,0500,0020,0B05", outClusters: "0019", manufacturer: "CentraLite", model: "3326"
+		fingerprint inClusters: "0000,0001,0003,0402,0500,0020,0B05", outClusters: "0019", manufacturer: "CentraLite", model: "3326-L", deviceJoinName: "Iris Motion Sensor"
+		fingerprint inClusters: "0000,0001,0003,000F,0020,0402,0500", outClusters: "0019", manufacturer: "SmartThings", model: "motionv4", deviceJoinName: "Motion Sensor"
 	}
 
 	simulator {
@@ -95,7 +90,7 @@ metadata {
 
 def parse(String description) {
 	log.debug "description: $description"
-    
+
 	Map map = [:]
 	if (description?.startsWith('catchall:')) {
 		map = parseCatchAllMessage(description)
@@ -106,55 +101,71 @@ def parse(String description) {
 	else if (description?.startsWith('temperature: ')) {
 		map = parseCustomMessage(description)
 	}
-    else if (description?.startsWith('zone status')) {
-	    map = parseIasMessage(description)
-    }
- 
+	else if (description?.startsWith('zone status')) {
+		map = parseIasMessage(description)
+	}
+
 	log.debug "Parse returned $map"
-	def result = map ? createEvent(map) : null
-    
-    if (description?.startsWith('enroll request')) {
-    	List cmds = enrollResponse()
-        log.debug "enroll response: ${cmds}"
-        result = cmds?.collect { new physicalgraph.device.HubAction(it) }
-    }
-    return result
+	def result = map ? createEvent(map) : [:]
+
+	if (description?.startsWith('enroll request')) {
+		List cmds = enrollResponse()
+		log.debug "enroll response: ${cmds}"
+		result = cmds?.collect { new physicalgraph.device.HubAction(it) }
+	}
+	return result
 }
 
 private Map parseCatchAllMessage(String description) {
-    Map resultMap = [:]
-    def cluster = zigbee.parse(description)
-    if (shouldProcessMessage(cluster)) {
-        switch(cluster.clusterId) {
-            case 0x0001:
-            	resultMap = getBatteryResult(cluster.data.last())
-                break
+	Map resultMap = [:]
+	def cluster = zigbee.parse(description)
+	if (shouldProcessMessage(cluster)) {
+		switch(cluster.clusterId) {
+			case 0x0001:
+				// 0x07 - configure reporting
+				if (cluster.command != 0x07) {
+					resultMap = getBatteryResult(cluster.data.last())
+				}
+				break
 
-            case 0x0402:
-                // temp is last 2 data values. reverse to swap endian
-                String temp = cluster.data[-2..-1].reverse().collect { cluster.hex1(it) }.join()
-                def value = getTemperature(temp)
-                resultMap = getTemperatureResult(value)
-                break
+			case 0x0402:
+				if (cluster.command == 0x07) {
+					if (cluster.data[0] == 0x00) {
+						log.debug "TEMP REPORTING CONFIG RESPONSE" + cluster
+						resultMap = [name: "checkInterval", value: 60 * 12, displayed: false, data: [protocol: "zigbee", hubHardwareId: device.hub.hardwareID]]
+					}
+					else {
+						log.warn "TEMP REPORTING CONFIG FAILED- error code:${cluster.data[0]}"
+					}
+
+				}
+				else {
+					// temp is last 2 data values. reverse to swap endian
+					String temp = cluster.data[-2..-1].reverse().collect { cluster.hex1(it) }.join()
+					def value = getTemperature(temp)
+					resultMap = getTemperatureResult(value)
+				}
+				break
 
 			case 0x0406:
-            	log.debug 'motion'
-                resultMap.name = 'motion'
-                break
-        }
-    }
+				// 0x07 - configure reporting
+				if (cluster.command != 0x07) {
+					log.debug 'motion'
+					resultMap.name = 'motion'
+				}
+				break
+		}
+	}
 
-    return resultMap
+	return resultMap
 }
 
 private boolean shouldProcessMessage(cluster) {
-    // 0x0B is default response indicating message got through
-    // 0x07 is bind message
-    boolean ignoredMessage = cluster.profileId != 0x0104 || 
-        cluster.command == 0x0B ||
-        cluster.command == 0x07 ||
-        (cluster.data.size() > 0 && cluster.data.first() == 0x3e)
-    return !ignoredMessage
+	// 0x0B is default response indicating message got through
+	boolean ignoredMessage = cluster.profileId != 0x0104 ||
+		cluster.command == 0x0B ||
+		(cluster.data.size() > 0 && cluster.data.first() == 0x3e)
+	return !ignoredMessage
 }
 
 private Map parseReportAttributeMessage(String description) {
@@ -163,7 +174,7 @@ private Map parseReportAttributeMessage(String description) {
 		map += [(nameAndValue[0].trim()):nameAndValue[1].trim()]
 	}
 	log.debug "Desc Map: $descMap"
- 
+
 	Map resultMap = [:]
 	if (descMap.cluster == "0402" && descMap.attrId == "0000") {
 		def value = getTemperature(descMap.value)
@@ -172,14 +183,14 @@ private Map parseReportAttributeMessage(String description) {
 	else if (descMap.cluster == "0001" && descMap.attrId == "0020") {
 		resultMap = getBatteryResult(Integer.parseInt(descMap.value, 16))
 	}
-    else if (descMap.cluster == "0406" && descMap.attrId == "0000") {
-    	def value = descMap.value.endsWith("01") ? "active" : "inactive"
-    	resultMap = getMotionResult(value)
-    } 
- 
+	else if (descMap.cluster == "0406" && descMap.attrId == "0000") {
+		def value = descMap.value.endsWith("01") ? "active" : "inactive"
+		resultMap = getMotionResult(value)
+	}
+
 	return resultMap
 }
- 
+
 private Map parseCustomMessage(String description) {
 	Map resultMap = [:]
 	if (description?.startsWith('temperature: ')) {
@@ -190,52 +201,18 @@ private Map parseCustomMessage(String description) {
 }
 
 private Map parseIasMessage(String description) {
-    List parsedMsg = description.split(' ')
-    String msgCode = parsedMsg[2]
-    
-    Map resultMap = [:]
-    switch(msgCode) {
-        case '0x0020': // Closed/No Motion/Dry
-        	resultMap = getMotionResult('inactive')
-            break
+	ZoneStatus zs = zigbee.parseZoneStatus(description)
 
-        case '0x0021': // Open/Motion/Wet
-        	resultMap = getMotionResult('active')
-            break
-
-        case '0x0022': // Tamper Alarm
-        	log.debug 'motion with tamper alarm'
-        	resultMap = getMotionResult('active')
-            break
-
-        case '0x0023': // Battery Alarm
-            break
-
-        case '0x0024': // Supervision Report
-        	log.debug 'no motion with tamper alarm'
-        	resultMap = getMotionResult('inactive')
-            break
-
-        case '0x0025': // Restore Report
-            break
-
-        case '0x0026': // Trouble/Failure
-        	log.debug 'motion with failure alarm'
-        	resultMap = getMotionResult('active')
-            break
-
-        case '0x0028': // Test Mode
-            break
-    }
-    return resultMap
+	// Some sensor models that use this DTH use alarm1 and some use alarm2 to signify motion
+	return (zs.isAlarm1Set() || zs.isAlarm2Set()) ? getMotionResult('active') : getMotionResult('inactive')
 }
 
 def getTemperature(value) {
 	def celsius = Integer.parseInt(value, 16).shortValue() / 100
 	if(getTemperatureScale() == "C"){
-		return celsius
+		return Math.round(celsius)
 	} else {
-		return celsiusToFahrenheit(celsius) as Integer
+		return Math.round(celsiusToFahrenheit(celsius))
 	}
 }
 
@@ -243,45 +220,35 @@ private Map getBatteryResult(rawValue) {
 	log.debug "Battery rawValue = ${rawValue}"
 	def linkText = getLinkText(device)
 
-	def result = [
-		name: 'battery',
-		value: '--',
-		translatable: true
-	]
+	def result = [:]
 
 	def volts = rawValue / 10
 
-	if (rawValue == 0 || rawValue == 255) {}
-	else {
-		if (volts > 3.5) {
-			result.descriptionText = "{{ device.displayName }} battery has too much power: (> 3.5) volts."
-		}
-		else {
-			if (device.getDataValue("manufacturer") == "SmartThings") {         
-				volts = rawValue // For the batteryMap to work the key needs to be an int
-				def batteryMap = [28:100, 27:100, 26:100, 25:90, 24:90, 23:70,
-								  22:70, 21:50, 20:50, 19:30, 18:30, 17:15, 16:1, 15:0]
-				def minVolts = 15
-				def maxVolts = 28
+	if (!(rawValue == 0 || rawValue == 255)) {
+		result.name = 'battery'
+		result.translatable = true
+		result.descriptionText = "{{ device.displayName }} battery was {{ value }}%"
+		if (device.getDataValue("manufacturer") == "SmartThings") {
+			volts = rawValue // For the batteryMap to work the key needs to be an int
+			def batteryMap = [28: 100, 27: 100, 26: 100, 25: 90, 24: 90, 23: 70,
+							  22: 70, 21: 50, 20: 50, 19: 30, 18: 30, 17: 15, 16: 1, 15: 0]
+			def minVolts = 15
+			def maxVolts = 28
 
-				if (volts < minVolts)
-					volts = minVolts
-				else if (volts > maxVolts)
-					volts = maxVolts
-				def pct = batteryMap[volts]
-				if (pct != null) {
-					result.value = pct
-                    def value = pct
-					result.descriptionText = "{{ device.displayName }} battery was {{ value }}"
-				}
-			}
-			else {
-				def minVolts = 2.1
-				def maxVolts = 3.0
-				def pct = (volts - minVolts) / (maxVolts - minVolts)
-				result.value = Math.min(100, (int) pct * 100)
-				result.descriptionText = "{{ device.displayName }} battery was {{ value }}"
-			}
+			if (volts < minVolts)
+				volts = minVolts
+			else if (volts > maxVolts)
+				volts = maxVolts
+			def pct = batteryMap[volts]
+			result.value = pct
+		} else {
+			def minVolts = 2.1
+			def maxVolts = 3.0
+			def pct = (volts - minVolts) / (maxVolts - minVolts)
+			def roundedPct = Math.round(pct * 100)
+			if (roundedPct <= 0)
+				roundedPct = 1
+			result.value = Math.min(100, roundedPct)
 		}
 	}
 
@@ -305,14 +272,14 @@ private Map getTemperatureResult(value) {
 		name: 'temperature',
 		value: value,
 		descriptionText: descriptionText,
-        translatable: true
+		translatable: true,
+		unit: temperatureScale
 	]
 }
 
 private Map getMotionResult(value) {
 	log.debug 'motion'
 	String descriptionText = value == 'active' ? "{{ device.displayName }} detected motion" : "{{ device.displayName }} motion has stopped"
-    //String descriptionText = '{{ device.displayName }} is {{ value | translate }}'
 	return [
 		name: 'motion',
 		value: value,
@@ -321,8 +288,15 @@ private Map getMotionResult(value) {
 	]
 }
 
+/**
+ * PING is used by Device-Watch in attempt to reach the Device
+ * */
+def ping() {
+	return zigbee.readAttribute(0x001, 0x0020) // Read the Battery Level
+}
+
 def refresh() {
-	log.debug "refresh executed"
+	log.debug "refresh called"
 	def refreshCmds = [
 		"st rattr 0x${device.deviceNetworkId} 1 0x402 0", "delay 200",
 		"st rattr 0x${device.deviceNetworkId} 1 1 0x20", "delay 200"
@@ -332,22 +306,13 @@ def refresh() {
 }
 
 def configure() {
-	String zigbeeEui = swapEndianHex(device.hub.zigbeeEui)
-	log.debug "Configuring Reporting, IAS CIE, and Bindings."
+	// Device-Watch allows 2 check-in misses from device + ping (plus 1 min lag time)
+	// enrolls with default periodic reporting until newer 5 min interval is confirmed
+	sendEvent(name: "checkInterval", value: 2 * 60 * 60 + 1 * 60, displayed: false, data: [protocol: "zigbee", hubHardwareId: device.hub.hardwareID])
 
-	def configCmds = [
-		"zcl global write 0x500 0x10 0xf0 {${zigbeeEui}}", "delay 200",
-		"send 0x${device.deviceNetworkId} 1 ${endpointId}", "delay 500",
-
-		"zdo bind 0x${device.deviceNetworkId} ${endpointId} 1 1 {${device.zigbeeId}} {}", "delay 200",
-		"zcl global send-me-a-report 1 0x20 0x20 30 21600 {01}",		//checkin time 6 hrs
-		"send 0x${device.deviceNetworkId} 1 ${endpointId}", "delay 500",
-
-		"zdo bind 0x${device.deviceNetworkId} ${endpointId} 1 0x402 {${device.zigbeeId}} {}", "delay 200",
-		"zcl global send-me-a-report 0x402 0 0x29 300 3600 {6400}",
-		"send 0x${device.deviceNetworkId} 1 ${endpointId}", "delay 500"
-	]
-	return configCmds + refresh() // send refresh cmds as part of config
+	// temperature minReportTime 30 seconds, maxReportTime 5 min. Reporting interval if no activity
+	// battery minReport 30 seconds, maxReportTime 6 hrs by default
+	return refresh() + zigbee.batteryConfig() + zigbee.temperatureConfig(30, 300) // send refresh cmds as part of config
 }
 
 def enrollResponse() {
@@ -372,19 +337,19 @@ private hex(value) {
 }
 
 private String swapEndianHex(String hex) {
-    reverseArray(hex.decodeHex()).encodeHex()
+	reverseArray(hex.decodeHex()).encodeHex()
 }
 
 private byte[] reverseArray(byte[] array) {
-    int i = 0;
-    int j = array.length - 1;
-    byte tmp;
-    while (j > i) {
-        tmp = array[j];
-        array[j] = array[i];
-        array[i] = tmp;
-        j--;
-        i++;
-    }
-    return array
+	int i = 0;
+	int j = array.length - 1;
+	byte tmp;
+	while (j > i) {
+		tmp = array[j];
+		array[j] = array[i];
+		array[i] = tmp;
+		j--;
+		i++;
+	}
+	return array
 }

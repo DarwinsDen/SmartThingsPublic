@@ -1,7 +1,7 @@
 /**
  *  GE Link Bulb
  *
- *  Copyright 2014 SmartThings
+ *  Copyright 2016 SmartThings
  *
  *  Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
  *  in compliance with the License. You may obtain a copy of the License at:
@@ -53,6 +53,8 @@ metadata {
         capability "Polling"
 
         fingerprint profileId: "0104", inClusters: "0000,0003,0004,0005,0006,0008,1000", outClusters: "0019", manufacturer: "GE_Appliances", model: "ZLL Light", deviceJoinName: "GE Link Bulb"
+        fingerprint profileId: "0104", inClusters: "0000,0003,0004,0005,0006,0008,1000", outClusters: "0019", manufacturer: "GE", model: "SoftWhite", deviceJoinName: "GE Link Soft White Bulb"
+        fingerprint profileId: "0104", inClusters: "0000,0003,0004,0005,0006,0008,1000", outClusters: "0019", manufacturer: "GE", model: "Daylight", deviceJoinName: "GE Link Daylight Bulb"
     }
 
 	// UI tile definitions
@@ -85,7 +87,7 @@ metadata {
 def parse(String description) {
     def resultMap = zigbee.getEvent(description)
     if (resultMap) {
-        if ((resultMap.name == "level" && state.trigger == "setLevel") || resultMap.name != "level") {  //doing this to account for weird level reporting bug with GE Link Bulbs
+        if (resultMap.name != "level" || resultMap.value != 0) {  // Ignore level reports of 0 sent when bulb turns off
             sendEvent(resultMap)
         }
     }
@@ -186,12 +188,10 @@ def updated() {
 }
 
 def on() {
-    state.trigger = "on/off"
     zigbee.on()
 }
 
 def off() {
-    state.trigger = "on/off"
     zigbee.off()
 }
 
@@ -204,7 +204,6 @@ def refresh() {
 }
 
 def setLevel(value) {
-    state.trigger = "setLevel"
     def cmd
     def delayForRefresh = 500
     if (dimRate && (state?.rate != null)) {
