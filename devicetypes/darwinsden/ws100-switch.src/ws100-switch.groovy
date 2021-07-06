@@ -47,7 +47,7 @@
  */
  
 metadata {
-	definition (name: "WS100+ Switch", namespace: "darwinsden", author: "darwin@darwinsden.com") {
+	definition (name: "WS100+ Switch", namespace: "darwinsden", author: "darwin@darwinsden.com", ocfDeviceType: "oic.d.light") {
 		capability "Actuator"
 		capability "Indicator"
 		capability "Switch"
@@ -56,6 +56,7 @@ metadata {
 		capability "Refresh"
 		capability "Sensor"
         capability "Configuration"
+        capability "Light"
         
         command "tapUp2"
         command "tapDown2"
@@ -78,6 +79,10 @@ metadata {
 		reply "200100,delay 100,2502": "command: 2503, payload: 00"
 	}
 
+	preferences {
+		input "ledIndicator", "enum", title: "LED Indicator", description: "Turn LED indicator... ", required: false, options:["on": "When On", "off": "When Off", "never": "Never"], defaultValue: "off"
+	}
+    
 	tiles(scale: 2) {
 		multiAttributeTile(name:"switch", type: "lighting", width: 6, height: 4, canChangeIcon: true){
 			tileAttribute ("device.switch", key: "PRIMARY_CONTROL") {
@@ -130,6 +135,30 @@ metadata {
 		main "switch"
 		details(["switch","tapUp2","tapUp3","holdUp","tapDown2","tapDown3","holdDown","indicator","firmwareVersion","refresh"])
 	}
+}
+def installed() {
+	// Device-Watch simply pings if no device events received for 32min(checkInterval)
+	sendEvent(name: "checkInterval", value: 2 * 15 * 60 + 2 * 60, displayed: false, data: [protocol: "zwave", hubHardwareId: device.hub.hardwareID, offlinePingable: "1"])
+}
+
+def updated(){
+	// Device-Watch simply pings if no device events received for 32min(checkInterval)
+	sendEvent(name: "checkInterval", value: 2 * 15 * 60 + 2 * 60, displayed: false, data: [protocol: "zwave", hubHardwareId: device.hub.hardwareID, offlinePingable: "1"])
+	switch (ledIndicator) {
+		case "on":
+			indicatorWhenOn()
+			break
+		case "off":
+			indicatorWhenOff()
+			break
+		case "never":
+			indicatorNever()
+			break
+		default:
+			indicatorWhenOn()
+			break
+	}
+	response(refresh())
 }
 
 def parse(String description) {
